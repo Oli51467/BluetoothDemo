@@ -3,7 +3,9 @@
   <component name="DesignSurface">
     <option name="filePathToZoomLevelMap">
       <map>
+        <entry key="..\:/AndroidProject/BluetoothDemo/app/src/main/res/drawable/ic_bluetooth_blue.xml" value="0.151" />
         <entry key="..\:/AndroidProject/BluetoothDemo/app/src/main/res/layout/activity_main.xml" value="0.2833333333333333" />
+        <entry key="..\:/AndroidProject/BluetoothDemo/app/src/main/res/layout/item_device_rv.xml" value="0.14114583333333333" />
       </map>
     </option>
   </component>

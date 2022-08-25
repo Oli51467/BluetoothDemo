@@ -38,9 +38,8 @@ dependencies {
 
     //蓝牙扫描库
     implementation 'no.nordicsemi.android.support.v18:scanner:1.5.0'
-//权限请求 支持Androidx
+    //权限请求 支持Androidx
     implementation 'pub.devrel:easypermissions:3.0.0'
-//让你的适配器一目了然，告别代码冗余
     implementation 'com.github.CymChad:BaseRecyclerViewAdapterHelper:3.0.4'
 
 }
