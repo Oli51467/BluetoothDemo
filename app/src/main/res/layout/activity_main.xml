@@ -44,4 +44,31 @@
         android:insetTop="0dp"
         android:insetBottom="0dp"
         android:text="停止扫描" />
+
+    <!--加载布局-->
+    <LinearLayout
+        android:id="@+id/lay_connecting_loading"
+        android:layout_centerInParent="true"
+        android:layout_width="160dp"
+        android:layout_height="160dp"
+        android:orientation="vertical"
+        android:visibility="invisible"
+        android:background="@color/white"
+        android:gravity="center">
+
+        <ProgressBar
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:indeterminate="true"
+            android:indeterminateTint="@color/purple_200" />
+
+        <TextView
+            android:layout_marginTop="12dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="连接中..."
+            android:textColor="@color/black"
+            android:textSize="@dimen/sp_14" />
+    </LinearLayout>
+
 </RelativeLayout>

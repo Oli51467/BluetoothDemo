@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.core.widget.ContentLoadingProgressBar;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -12,11 +13,18 @@ import androidx.recyclerview.widget.RecyclerView;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.LinearLayout;
 
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.sdu.irlab.adapter.BleDeviceAdapter;
@@ -31,7 +39,6 @@ import no.nordicsemi.android.support.v18.scanner.BluetoothLeScannerCompat;
 import no.nordicsemi.android.support.v18.scanner.ScanCallback;
 import no.nordicsemi.android.support.v18.scanner.ScanResult;
 import pub.devrel.easypermissions.AfterPermissionGranted;
-import pub.devrel.easypermissions.EasyPermissions;
 
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
 
@@ -39,6 +46,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     // 权限请求码
     public static final int REQUEST_PERMISSION_CODE = 9527;
+
+    private boolean isConnected = false;
 
     private Button startScan;
 
@@ -59,6 +68,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private ScanCallback scanCallback;
 
     private ContentLoadingProgressBar loadingProgressBar;
+
+    private LinearLayout layConnectingLoading;  // 等待连接
+
+    private BluetoothGatt bluetoothGatt;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -90,14 +103,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         Button stopScan = findViewById(R.id.btn_stop_scan);
         startScan = findViewById(R.id.btn_start_scan);
         loadingProgressBar = findViewById(R.id.loading_progress_bar);
+        layConnectingLoading = findViewById(R.id.lay_connecting_loading);
 
         startScan.setOnClickListener(this);
         stopScan.setOnClickListener(this);
         //扫描结果回调
         scanCallback = new ScanCallback() {
+            @SuppressLint("MissingPermission")
             @Override
             public void onScanResult(int callbackType, @NonNull ScanResult result) {
-                ActivityCompat.checkSelfPermission(mContext, Manifest.permission.BLUETOOTH_CONNECT);
                 addDeviceList(new BleDevice(result.getDevice(), result.getRssi(), result.getDevice().getName()));
             }
 
@@ -109,6 +123,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         //列表配置
         deviceAdapter = new BleDeviceAdapter(R.layout.item_device_rv, mList);
         rvDevice.setLayoutManager(new LinearLayoutManager(this));
+        //item点击事件
+        deviceAdapter.setOnItemClickListener((adapter, view, position) -> {
+            //连接设备
+            connectDevice(mList.get(position));
+        });
         //启用动画
         deviceAdapter.setAnimationEnable(true);
         //设置动画方式
@@ -136,23 +155,32 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
      */
     @AfterPermissionGranted(REQUEST_PERMISSION_CODE)
     private void requestPermission() {
-        String[] perms = {Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.BLUETOOTH_CONNECT};
-        // 权限通过之后检查有没有打开蓝牙
-        if (EasyPermissions.hasPermissions(this, perms)) {
-            openBluetooth();
+        List<String> neededPermissions = new ArrayList<>();
+        String[] permissions = { Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.BLUETOOTH_CONNECT};
+        for (String permission : permissions) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+                neededPermissions.add(permission);
+            }
+        }
+
+        if (!neededPermissions.isEmpty()) {
+            ActivityCompat.requestPermissions(this, neededPermissions.toArray(new String[0]), REQUEST_PERMISSION_CODE);
         } else {
-            EasyPermissions.requestPermissions(this, "App需要定位权限", REQUEST_PERMISSION_CODE, perms);
+            openBluetooth();
         }
     }
 
-    /**
-     * 权限请求结果
-     */
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        // 将结果转发给 EasyPermissions
-        EasyPermissions.onRequestPermissionsResult(REQUEST_PERMISSION_CODE, permissions, grantResults, this);
+        if (requestCode == REQUEST_PERMISSION_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                openBluetooth();
+            } else {
+                ToastUtil.show(this, "您没有开启权限");
+            }
+        }
     }
 
     /**
@@ -172,6 +200,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
      */
     public void stopScanDevice() {
         loadingProgressBar.setVisibility(View.INVISIBLE);
+        disconnectDevice();
         BluetoothLeScannerCompat scanner = BluetoothLeScannerCompat.getScanner();
         scanner.stopScan(scanCallback);
     }
@@ -197,7 +226,57 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         deviceAdapter.notifyDataSetChanged();
     }
 
+    /**
+     * 连接设备
+     *
+     * @param bleDevice 蓝牙设备
+     */
+    @SuppressLint("MissingPermission")
+    private void connectDevice(BleDevice bleDevice) {
+        // 显示连接等待布局
+        layConnectingLoading.setVisibility(View.VISIBLE);
 
+        // 停止扫描
+        stopScanDevice();
+
+        // 获取远程设备
+        BluetoothDevice device = bleDevice.getDevice();
+        // 连接gatt
+        bluetoothGatt = device.connectGatt(this, false, new BluetoothGattCallback() {
+            @Override
+            public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    isConnected = true;
+                    Log.d(TAG, "连接成功");
+                    runOnUiThread(() -> {
+                        layConnectingLoading.setVisibility(View.GONE);
+                        ToastUtil.show(mContext, "连接成功");
+                    });
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    isConnected = false;
+                    Log.d(TAG, "断开连接");
+                    runOnUiThread(() -> {
+                        layConnectingLoading.setVisibility(View.GONE);
+                        ToastUtil.show(mContext, "断开连接");
+                    });
+                }
+            }
+        });
+    }
+
+    /**
+     * 断开设备连接
+     */
+    @SuppressLint("MissingPermission")
+    private void disconnectDevice() {
+        if (isConnected && bluetoothGatt != null) {
+            bluetoothGatt.disconnect();
+        }
+    }
+
+
+
+    @SuppressLint("NotifyDataSetChanged")
     @Override
     public void onClick(View v) {
         int vid = v.getId();
@@ -205,8 +284,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             startScanDevice();
             startScan.setEnabled(false);
         } else if (vid == R.id.btn_stop_scan) {
+            runOnUiThread(() -> {
+                mList.clear();
+                deviceAdapter.notifyDataSetChanged();
+            });
             stopScanDevice();
             startScan.setEnabled(true);
         }
     }
+
+
 }
